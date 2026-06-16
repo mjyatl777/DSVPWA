@@ -38,7 +38,7 @@ pool:
 
 container:
   image: fortifydocker/fortify-ci-tools:latest
-  options: --user root
+  # No --user root; the image runs as vsts_azpcontainer — we work with that
 
 steps:
 
@@ -49,48 +49,64 @@ steps:
       git clone https://github.com/mjyatl777/DSVPWA "$(Build.SourcesDirectory)"
     displayName: 'Checkout DSVPWA source'
 
-  # ── 2. Install Python, create venv, install deps, and package ───────────────
+  # ── 2. Create venv, install deps, and package ───────────────────────────────
   #
-  #  All done in ONE step so the venv path is a plain shell variable shared
-  #  across the whole script — no ADO macro expansion issues across steps.
+  #  fortify-ci-tools (Ubuntu 24.04) ships Python 3 but NOT python3-venv.
+  #  Instead of apt (which requires root), we use pip's built-in venv via
+  #  the 'virtualenv' package installed into the user site, or simply use
+  #  python3 -m venv with --without-pip and install pip manually.
+  #
+  #  Simplest root-free approach: install virtualenv via pip --user, then
+  #  use it to create the venv.
   #
   - script: |
       set -e
 
-      # ── 2a. Install Python toolchain ──────────────────────────────────────
-      apt-get update -qq
-      apt-get install -y python3 python3-pip python3-venv --no-install-recommends
+      SOURCE_DIR="$(Build.SourcesDirectory)"
+      VENV_DIR="$SOURCE_DIR/.venv"
+      STAGING_DIR="$(Build.ArtifactStagingDirectory)"
 
-      # ── 2b. Create virtualenv (use a simple absolute path, not an ADO macro)
-      VENV_DIR="$(Build.SourcesDirectory)/.venv"
-      python3 -m venv "$VENV_DIR"
+      echo "==> Python version"
+      python3 --version
+
+      # ── Install virtualenv without root (pip --user) ──────────────────────
+      echo "==> Installing virtualenv"
+      pip3 install --user virtualenv
+
+      # Ensure ~/.local/bin is on PATH so 'virtualenv' command is found
+      export PATH="$HOME/.local/bin:$PATH"
+
+      # ── Create the virtual environment ───────────────────────────────────
+      echo "==> Creating venv at $VENV_DIR"
+      python3 -m virtualenv "$VENV_DIR"
       source "$VENV_DIR/bin/activate"
 
-      # ── 2c. Install project dependencies ─────────────────────────────────
-      cd "$(Build.SourcesDirectory)"
+      # ── Install project dependencies ──────────────────────────────────────
+      cd "$SOURCE_DIR"
       if [ -f requirements.txt ]; then
+        echo "==> Installing dependencies from requirements.txt"
         pip install --upgrade pip
         pip install -r requirements.txt
-        echo "Dependencies installed from requirements.txt"
       else
-        echo "No requirements.txt found – skipping pip install"
+        echo "==> No requirements.txt found – skipping pip install"
       fi
 
-      # Confirm venv exists before handing it to scancentral
-      echo "Virtual environment path: $VENV_DIR"
+      # Confirm venv is intact before handing to scancentral
+      echo "==> Venv python: $(which python)"
       ls "$VENV_DIR/bin/python"
 
-      # ── 2d. Package with ScanCentral ──────────────────────────────────────
-      mkdir -p "$(Build.ArtifactStagingDirectory)"
+      # ── Package with ScanCentral ──────────────────────────────────────────
+      mkdir -p "$STAGING_DIR"
 
+      echo "==> Running scancentral package"
       scancentral package \
         -bt none \
         --python-virtual-env "$VENV_DIR" \
         -o "$(PACKAGE_FILE)"
 
-      echo "Package created: $(PACKAGE_FILE)"
+      echo "==> Package created:"
       ls -lh "$(PACKAGE_FILE)"
-    displayName: 'Install deps, create venv, and package with ScanCentral'
+    displayName: 'Create venv, install deps, and package with ScanCentral'
 
   # ── 3. Log in to Fortify on Demand ──────────────────────────────────────────
   - script: |
