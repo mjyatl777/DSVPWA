@@ -1,0 +1,126 @@
+# ============================================================
+# Fortify on Demand – SAST Pipeline for DSVPWA (Python)
+# Container image : fortifydocker/fortify-ci-tools:8
+# FoD Release ID  : 1770630
+# Source repo     : https://github.com/mjyatl777/DSVPWA
+# ============================================================
+#
+# Required pipeline secrets (set in Azure DevOps → Library → Variable Groups
+# or as pipeline secret variables):
+#
+#   FOD_CLIENT_ID       – FoD API client ID
+#   FOD_CLIENT_SECRET   – FoD API client secret
+#
+# Required pipeline variables (non-secret, set at pipeline or variable-group level):
+#
+#   FOD_URL             – e.g. https://ams.fortify.com  (or emea/eu/apac)
+#   FOD_API_URL         – e.g. https://api.ams.fortify.com
+#
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+
+pr:
+  branches:
+    include:
+      - main
+      - master
+
+variables:
+  # ── Non-secret configuration ───────────────────────────────
+  FOD_RELEASE_ID: '1770630'
+  PYTHON_VERSION: '3.11'
+  VENV_DIR: '$(Build.SourcesDirectory)/.venv'
+  PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+container:
+  image: fortifydocker/fortify-ci-tools:8
+  options: --user root
+
+steps:
+
+  # ── 1. Check out the target repository ────────────────────
+  - checkout: none
+
+  - script: |
+      git clone https://github.com/mjyatl777/DSVPWA $(Build.SourcesDirectory)
+    displayName: 'Checkout DSVPWA source'
+
+  # ── 2. Set up Python and create the virtual environment ───
+  #     The fortify-ci-tools image is Ubuntu 24.04 and includes
+  #     Python 3 from the base OS, so we install pip + venv here.
+  - script: |
+      apt-get update -qq
+      apt-get install -y python3 python3-pip python3-venv --no-install-recommends
+
+      python3 -m venv $(VENV_DIR)
+      source $(VENV_DIR)/bin/activate
+
+      # Install project dependencies so SCA can resolve all imports
+      if [ -f "$(Build.SourcesDirectory)/requirements.txt" ]; then
+        pip install --upgrade pip
+        pip install -r $(Build.SourcesDirectory)/requirements.txt
+      else
+        echo "No requirements.txt found – skipping pip install"
+      fi
+    displayName: 'Set up Python virtual environment'
+
+  # ── 3. Package source with ScanCentral SAST ───────────────
+  #     -bt python     : Python build tool mode
+  #     --python-virtual-env : include venv so SCA resolves third-party imports
+  #     -o             : output zip path
+  - script: |
+      mkdir -p $(Build.ArtifactStagingDirectory)
+
+      scancentral package \
+        -bt python \
+        --python-virtual-env $(VENV_DIR) \
+        -o $(PACKAGE_FILE) \
+        -d $(Build.SourcesDirectory)
+
+      echo "Package created: $(PACKAGE_FILE)"
+      ls -lh $(PACKAGE_FILE)
+    displayName: 'Package source with ScanCentral'
+
+  # ── 4. Log in to Fortify on Demand ────────────────────────
+  - script: |
+      fcli fod session login \
+        --url $(FOD_API_URL) \
+        --client-id $(FOD_CLIENT_ID) \
+        --client-secret $(FOD_CLIENT_SECRET) \
+        --session pipeline
+    displayName: 'Authenticate to Fortify on Demand'
+    env:
+      FOD_CLIENT_ID: $(FOD_CLIENT_ID)
+      FOD_CLIENT_SECRET: $(FOD_CLIENT_SECRET)
+
+  # ── 5. Upload package and start SAST scan ─────────────────
+  - script: |
+      fcli fod sast-scan start \
+        --release $(FOD_RELEASE_ID) \
+        --file $(PACKAGE_FILE) \
+        --store curScan \
+        --session pipeline
+    displayName: 'Submit SAST scan to FoD (release $(FOD_RELEASE_ID))'
+
+  # ── 6. Wait for scan completion and check results ─────────
+  #     Remove or comment out this step if you do NOT want the
+  #     pipeline to block until the FoD scan finishes.
+  - script: |
+      fcli fod sast-scan wait-for \
+        ::curScan:: \
+        --session pipeline
+    displayName: 'Wait for SAST scan to complete'
+
+  # ── 7. Log out of FoD session ────────────────────────────
+  - script: |
+      fcli fod session logout --session pipeline
+    displayName: 'Log out of Fortify on Demand'
+    condition: always()
