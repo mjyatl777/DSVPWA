@@ -1,19 +1,17 @@
 # ============================================================
 # Fortify on Demand – SAST Pipeline for DSVPWA (Python)
-# Container image : fortifydocker/fortify-ci-tools:latest
-# FoD Release ID  : 1770630
-# Source repo     : https://github.com/mjyatl777/DSVPWA
+# Agent        : ubuntu-latest (Microsoft-hosted)
+# Fortify tools: installed at runtime via fcli (no container needed)
+# FoD Release ID: 1770630
+# Source repo  : https://github.com/mjyatl777/DSVPWA
 # ============================================================
 #
-# Required pipeline secrets (set in Azure DevOps → Library → Variable Groups
-# or as pipeline secret variables):
-#
+# Required pipeline SECRET variables:
 #   FOD_CLIENT_ID       – FoD API client ID
 #   FOD_CLIENT_SECRET   – FoD API client secret
 #
-# Required pipeline variables (non-secret):
-#
-#   FOD_API_URL         – e.g. https://api.ams.fortify.com  (or api.emea, etc.)
+# Required pipeline VARIABLES (non-secret):
+#   FOD_API_URL         – e.g. https://api.ams.fortify.com
 #
 # ============================================================
 
@@ -31,14 +29,12 @@ pr:
 
 variables:
   FOD_RELEASE_ID: '1770630'
+  SCANCENTRAL_VERSION: 'latest'
+  VENV_DIR: '$(Build.SourcesDirectory)/.venv'
   PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
 
 pool:
   vmImage: 'ubuntu-latest'
-
-container:
-  image: fortifydocker/fortify-ci-tools:latest
-  # No --user root; the image runs as vsts_azpcontainer — we work with that
 
 steps:
 
@@ -49,66 +45,60 @@ steps:
       git clone https://github.com/mjyatl777/DSVPWA "$(Build.SourcesDirectory)"
     displayName: 'Checkout DSVPWA source'
 
-  # ── 2. Create venv, install deps, and package ───────────────────────────────
-  #
-  #  fortify-ci-tools (Ubuntu 24.04) ships Python 3 but NOT python3-venv.
-  #  Instead of apt (which requires root), we use pip's built-in venv via
-  #  the 'virtualenv' package installed into the user site, or simply use
-  #  python3 -m venv with --without-pip and install pip manually.
-  #
-  #  Simplest root-free approach: install virtualenv via pip --user, then
-  #  use it to create the venv.
-  #
+  # ── 2. Install fcli and ScanCentral Client ───────────────────────────────────
+  #  Uses the official fcli installer — no container or pre-installed tools needed.
   - script: |
       set -e
+      echo "==> Installing fcli"
+      curl -fsSL https://github.com/fortify/fcli/releases/latest/download/fcli-linux.tgz \
+        | tar -xz -C /usr/local/bin
+      fcli --version
 
-      SOURCE_DIR="$(Build.SourcesDirectory)"
-      VENV_DIR="$SOURCE_DIR/.venv"
-      STAGING_DIR="$(Build.ArtifactStagingDirectory)"
+      echo "==> Installing ScanCentral Client via fcli"
+      fcli tool sc-client install --version $(SCANCENTRAL_VERSION) -d /opt/scancentral
+      echo "/opt/scancentral/bin" >> $GITHUB_PATH || true
+      export PATH="/opt/scancentral/bin:$PATH"
+      scancentral -version
+    displayName: 'Install fcli and ScanCentral Client'
 
-      echo "==> Python version"
-      python3 --version
+  # ── 3. Set up Python venv and install project dependencies ──────────────────
+  #  ubuntu-latest ships Python 3.12; python3-venv is pre-installed.
+  - script: |
+      set -e
+      echo "==> Python version: $(python3 --version)"
 
-      # ── Install virtualenv without root (pip --user) ──────────────────────
-      echo "==> Installing virtualenv"
-      pip3 install --user virtualenv
+      python3 -m venv "$(VENV_DIR)"
+      source "$(VENV_DIR)/bin/activate"
 
-      # Ensure ~/.local/bin is on PATH so 'virtualenv' command is found
-      export PATH="$HOME/.local/bin:$PATH"
-
-      # ── Create the virtual environment ───────────────────────────────────
-      echo "==> Creating venv at $VENV_DIR"
-      python3 -m virtualenv "$VENV_DIR"
-      source "$VENV_DIR/bin/activate"
-
-      # ── Install project dependencies ──────────────────────────────────────
-      cd "$SOURCE_DIR"
-      if [ -f requirements.txt ]; then
-        echo "==> Installing dependencies from requirements.txt"
+      if [ -f "$(Build.SourcesDirectory)/requirements.txt" ]; then
+        echo "==> Installing dependencies"
         pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r "$(Build.SourcesDirectory)/requirements.txt"
       else
-        echo "==> No requirements.txt found – skipping pip install"
+        echo "==> No requirements.txt found – skipping"
       fi
 
-      # Confirm venv is intact before handing to scancentral
-      echo "==> Venv python: $(which python)"
-      ls "$VENV_DIR/bin/python"
+      echo "==> Venv ready: $(which python)"
+    displayName: 'Set up Python virtual environment'
 
-      # ── Package with ScanCentral ──────────────────────────────────────────
-      mkdir -p "$STAGING_DIR"
+  # ── 4. Package source with ScanCentral ──────────────────────────────────────
+  - script: |
+      set -e
+      export PATH="/opt/scancentral/bin:$PATH"
+      mkdir -p "$(Build.ArtifactStagingDirectory)"
 
-      echo "==> Running scancentral package"
+      cd "$(Build.SourcesDirectory)"
+
       scancentral package \
         -bt none \
-        --python-virtual-env "$VENV_DIR" \
+        --python-virtual-env "$(VENV_DIR)" \
         -o "$(PACKAGE_FILE)"
 
       echo "==> Package created:"
       ls -lh "$(PACKAGE_FILE)"
-    displayName: 'Create venv, install deps, and package with ScanCentral'
+    displayName: 'Package source with ScanCentral'
 
-  # ── 3. Log in to Fortify on Demand ──────────────────────────────────────────
+  # ── 5. Log in to Fortify on Demand ──────────────────────────────────────────
   - script: |
       fcli fod session login \
         --url "$(FOD_API_URL)" \
@@ -120,7 +110,7 @@ steps:
       FOD_CLIENT_ID: $(FOD_CLIENT_ID)
       FOD_CLIENT_SECRET: $(FOD_CLIENT_SECRET)
 
-  # ── 4. Upload package and start SAST scan ───────────────────────────────────
+  # ── 6. Upload package and start SAST scan ───────────────────────────────────
   - script: |
       fcli fod sast-scan start \
         --release "$(FOD_RELEASE_ID)" \
@@ -129,16 +119,13 @@ steps:
         --session pipeline
     displayName: 'Submit SAST scan to FoD (release $(FOD_RELEASE_ID))'
 
-  # ── 5. Wait for scan completion ─────────────────────────────────────────────
-  #  Remove or comment out this step if you do NOT want the pipeline to block
-  #  until the FoD scan finishes.
+  # ── 7. Wait for scan completion ─────────────────────────────────────────────
+  #  Comment out if you don't want the pipeline to block on scan completion.
   - script: |
-      fcli fod sast-scan wait-for \
-        ::curScan:: \
-        --session pipeline
+      fcli fod sast-scan wait-for ::curScan:: --session pipeline
     displayName: 'Wait for SAST scan to complete'
 
-  # ── 6. Log out ───────────────────────────────────────────────────────────────
+  # ── 8. Log out ───────────────────────────────────────────────────────────────
   - script: |
       fcli fod session logout --session pipeline
     displayName: 'Log out of Fortify on Demand'
