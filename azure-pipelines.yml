@@ -33,7 +33,7 @@ pr:
 variables:
   # ── Non-secret configuration ───────────────────────────────
   FOD_RELEASE_ID: '1770630'
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.9'
   VENV_DIR: '$(Build.SourcesDirectory)/.venv'
   PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
 
