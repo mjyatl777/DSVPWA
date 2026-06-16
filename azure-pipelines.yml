@@ -33,7 +33,7 @@ pr:
 variables:
   # ── Non-secret configuration ───────────────────────────────
   FOD_RELEASE_ID: '1770630'
-  PYTHON_VERSION: '3.9'
+  PYTHON_VERSION: '3.11'
   VENV_DIR: '$(Build.SourcesDirectory)/.venv'
   PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
 
@@ -73,17 +73,19 @@ steps:
     displayName: 'Set up Python virtual environment'
 
   # ── 3. Package source with ScanCentral SAST ───────────────
-  #     -bt python     : Python build tool mode
+  #     -bt python           : Python build tool mode
   #     --python-virtual-env : include venv so SCA resolves third-party imports
-  #     -o             : output zip path
+  #     -o                   : output zip path
+  #     Note: scancentral package has no -d flag; cd into source dir first
   - script: |
       mkdir -p $(Build.ArtifactStagingDirectory)
+
+      cd $(Build.SourcesDirectory)
 
       scancentral package \
         -bt python \
         --python-virtual-env $(VENV_DIR) \
-        -o $(PACKAGE_FILE) \
-        -d $(Build.SourcesDirectory)
+        -o $(PACKAGE_FILE)
 
       echo "Package created: $(PACKAGE_FILE)"
       ls -lh $(PACKAGE_FILE)
