@@ -41,7 +41,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 container:
-  image: fortifydocker/fortify-ci-tools:8
+  image: fortifydocker/fortify-ci-tools:latest
   options: --user root
 
 steps:
