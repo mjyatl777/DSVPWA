@@ -32,7 +32,6 @@ variables:
   SCANCENTRAL_VERSION: 'latest'
   VENV_DIR: '$(Build.SourcesDirectory)/.venv'
   PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
-  FOD_API_URL: 'https://api.ams.fortify.com'
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -105,7 +104,7 @@ steps:
         --url "$(FOD_API_URL)" \
         --client-id "$(FOD_CLIENT_ID)" \
         --client-secret "$(FOD_CLIENT_SECRET)" \
-        --session pipeline
+        --fod-session pipeline
     displayName: 'Authenticate to Fortify on Demand'
     env:
       FOD_CLIENT_ID: $(FOD_CLIENT_ID)
@@ -117,17 +116,17 @@ steps:
         --release "$(FOD_RELEASE_ID)" \
         --file "$(PACKAGE_FILE)" \
         --store curScan \
-        --session pipeline
+        --fod-session pipeline
     displayName: 'Submit SAST scan to FoD (release $(FOD_RELEASE_ID))'
 
   # ── 7. Wait for scan completion ─────────────────────────────────────────────
   #  Comment out if you don't want the pipeline to block on scan completion.
   - script: |
-      fcli fod sast-scan wait-for ::curScan:: --session pipeline
+      fcli fod sast-scan wait-for ::curScan:: --fod-session pipeline
     displayName: 'Wait for SAST scan to complete'
 
   # ── 8. Log out ───────────────────────────────────────────────────────────────
   - script: |
-      fcli fod session logout --session pipeline
+      fcli fod session logout --fod-session pipeline
     displayName: 'Log out of Fortify on Demand'
     condition: always()
