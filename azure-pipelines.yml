@@ -83,7 +83,7 @@ steps:
       cd $(Build.SourcesDirectory)
 
       scancentral package \
-        -bt python \
+        -bt none \
         --python-virtual-env $(VENV_DIR) \
         -o $(PACKAGE_FILE)
 
