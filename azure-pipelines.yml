@@ -32,6 +32,7 @@ variables:
   SCANCENTRAL_VERSION: 'latest'
   VENV_DIR: '$(Build.SourcesDirectory)/.venv'
   PACKAGE_FILE: '$(Build.ArtifactStagingDirectory)/dsvpwa-package.zip'
+  FOD_API_URL: 'https://api.ams.fortify.com'
 
 pool:
   vmImage: 'ubuntu-latest'
